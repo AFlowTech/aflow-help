@@ -707,6 +707,12 @@ aflow-sys/
 - 接口名称从"同步待办任务接口"更名为"任务同步接口"
 - 接口路径：`POST /aflow/api/order/sync/task`
 
+**新任务通知功能：**
+- 当同步的任务是新增任务（`taskStatus` 为 `new` 或 `ing` 状态）时，aiflow会自动发送钉钉push消息通知处理人
+- 使用 `com.aflow.sys.link.LinkMsgService#sendFlowMsg` 方法发送通知
+- 通知消息会发送给任务的所有处理人（`assigneeUserCode` 列表中的所有用户）
+- 消息内容包含任务名称、流程标题、处理按钮等，支持钉钉、飞书、企业微信等多种消息渠道
+
 **关键字段：**
 - `orderId`: 流程订单号（必填）
 - `orderStatus`: 订单状态（必填）：new-新建，ing-处理中，over-完成
