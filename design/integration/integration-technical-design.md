@@ -541,6 +541,7 @@ Authorization: Bearer {access_token}
       "taskResult": "accept",
       "deadLine": "2025-01-25 18:00:00",
       "nodeType": "audit",
+      "createTime": "2025-01-24 10:00:00",
       "handleTime": "2025-01-24 15:30:00",
       "showPc": true,
       "showMobile": true
@@ -551,32 +552,33 @@ Authorization: Bearer {access_token}
 
 **请求参数说明：**
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| orderId | Long | 是 | 流程订单号 |
-| orderStatus | String | 是 | 订单状态：new-新建，ing-处理中，over-完成（默认ing） |
-| orderResult | String | 是 | 订单结果：ing-处理中，pass-已完成，reject-已拒绝，revoke-已撤销，delete-已删除 |
-| initiator | String | 是 | 发起人编号 |
-| version | Integer | 否 | 订单版本（有就传，没有可以不传） |
-| parentOrderId | Long | 否 | 父订单号（有就传，没有可以不传） |
-| parentTaskOrderId | String | 否 | 父任务订单号（有就传，没有可以不传） |
-| businessKey | String | 是 | 业务编码，用于记录三方系统跟流程引擎对接的唯一映射Key |
-| createTime | String | 是 | 流程订单创建时间（格式：yyyy-MM-dd HH:mm:ss） |
-| updateTime | String | 是 | 流程订单更新时间（格式：yyyy-MM-dd HH:mm:ss） |
-| ccUsers | Array | 否 | 抄送人列表（非必传，有就传，没有就不传） |
-| ccUsers[].userCode | String | 是 | 抄送人编码 |
-| ccUsers[].ccTime | String | 是 | 抄送时间（格式：yyyy-MM-dd HH:mm:ss） |
-| tasks | Array | 是 | 任务列表（包含待办和已完成任务） |
-| tasks[].taskId | String | 是 | 任务ID |
-| tasks[].taskName | String | 是 | 任务名称 |
-| tasks[].assigneeUserCode | Array | 是 | 处理人编码列表（可能有多个） |
-| tasks[].taskStatus | String | 是 | 任务状态：new-新建，ing-处理中，over-完成（默认ing） |
-| tasks[].taskResult | String | 是 | 任务处理结果：new-新建，accept-领取，pass-通过，reject-拒绝，revoke-撤销，rebut-驳回 |
-| tasks[].deadLine | String | 是 | 处理截止时间（格式：yyyy-MM-dd HH:mm:ss） |
-| tasks[].nodeType | String | 是 | 节点类型：handle-执行，audit-审批，notify-知悉（默认audit） |
-| tasks[].handleTime | String | 否 | 处理时间（格式：yyyy-MM-dd HH:mm:ss，处理完成后必填） |
-| tasks[].showPc | Boolean | 是 | PC是否展示 |
-| tasks[].showMobile | Boolean | 是 | 手机是否展示 |
+| 参数                       | 类型 | 必填 | 说明                                                           |
+|--------------------------|------|------|--------------------------------------------------------------|
+| orderId                  | Long | 是 | 流程订单号                                                        |
+| orderStatus              | String | 是 | 订单状态：new-新建，ing-处理中，over-完成（默认ing）                           |
+| orderResult              | String | 是 | 订单结果：ing-处理中，pass-已完成，reject-已拒绝，revoke-已撤销，delete-已删除       |
+| initiator                | String | 是 | 发起人编号                                                        |
+| version                  | Integer | 否 | 订单版本（有就传，没有可以不传）                                             |
+| parentOrderId            | Long | 否 | 父订单号（有就传，没有可以不传）                                             |
+| parentTaskOrderId        | String | 否 | 父任务订单号（有就传，没有可以不传）                                           |
+| businessKey              | String | 是 | 业务编码，用于记录三方系统跟流程引擎对接的唯一映射Key                                 |
+| createTime               | String | 是 | 流程订单创建时间（格式：yyyy-MM-dd HH:mm:ss）                             |
+| updateTime               | String | 是 | 流程订单更新时间（格式：yyyy-MM-dd HH:mm:ss）                             |
+| ccUsers                  | Array | 否 | 抄送人列表（非必传，有就传，没有就不传）                                         |
+| ccUsers[].userCode       | String | 是 | 抄送人编码                                                        |
+| ccUsers[].ccTime         | String | 是 | 抄送时间（格式：yyyy-MM-dd HH:mm:ss）                                 |
+| tasks                    | Array | 是 | 任务列表（包含待办和已完成任务）                                             |
+| tasks[].taskId           | String | 是 | 任务ID                                                         |
+| tasks[].taskName         | String | 是 | 任务名称                                                         |
+| tasks[].assigneeUserCode | Array | 是 | 处理人编码列表（可能有多个）                                               |
+| tasks[].taskStatus       | String | 是 | 任务状态：new-新建，ing-处理中，over-完成（默认ing）                           |
+| tasks[].taskResult       | String | 是 | 任务处理结果：new-新建，accept-领取，pass-通过，reject-拒绝，revoke-撤销，rebut-驳回 |
+| tasks[].deadLine         | String | 是 | 处理截止时间（格式：yyyy-MM-dd HH:mm:ss）                               |
+| tasks[].nodeType         | String | 是 | 节点类型：handle-执行，audit-审批，notify-知悉（默认audit）                   |
+| tasks[].createTime       | String | 否 | 创建时间（格式：yyyy-MM-dd HH:mm:ss）                                 |
+| tasks[].handleTime       | String | 否 | 处理时间（格式：yyyy-MM-dd HH:mm:ss，处理完成后必填）                         |
+| tasks[].showPc           | Boolean | 是 | PC是否展示                                                       |
+| tasks[].showMobile       | Boolean | 是 | 手机是否展示                                                       |
 
 **状态枚举说明：**
 
