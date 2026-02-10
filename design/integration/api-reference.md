@@ -11,10 +11,11 @@
 
 - [第一部分：aiflow提供的接口](#第一部分aiflow提供的接口)
   - [1. 通用说明](#1-通用说明)
-  - [2. 基础数据同步接口](#2-基础数据同步接口)
-  - [3. SSO单点登录接口](#3-sso单点登录接口)
-  - [4. 任务中心简易集成接口](#4-任务中心简易集成接口)
-  - [5. 全面流程引擎集成接口](#5-全面流程引擎集成接口)
+  - [2. 用户编码绑定接口](#2-用户编码绑定接口)
+  - [3. 基础数据同步接口](#3-基础数据同步接口)
+  - [4. SSO单点登录接口](#4-sso单点登录接口)
+  - [5. 任务中心简易集成接口](#5-任务中心简易集成接口)
+  - [6. 全面流程引擎集成接口](#6-全面流程引擎集成接口)
 - [第二部分：Odoo ERP需要提供的接口](#第二部分odoo-erp需要提供的接口)
   - [1. OAuth2接口](#1-oauth2接口)
   - [2. 流程数据接收接口](#2-流程数据接收接口)
@@ -25,7 +26,24 @@
 
 ## 1. 通用说明
 
-### 1.1 签名机制
+### 1.1 用户编码绑定说明
+
+**重要提示：** 在调用aiflow接口时，如果接口参数中包含用户编码（如 `managerUserCode`、`operationUserCode`、`configUserCode`、`createBy`、`initiator`、`assigneeUserCode` 等），这些用户编码必须是**贵公司系统的用户唯一ID**（即 `customUserCode`）。
+
+在使用这些用户编码之前，**必须先调用用户绑定接口**（`/aflow/api/auth/bind`）将贵公司的用户编码与aiflow系统的用户编码进行绑定。
+
+**绑定流程：**
+1. 调用 `/aflow/api/auth/bind` 接口，传入贵公司的用户编码（`customUserCode`）和关联信息（`linkUserCode` 或 `phoneNumber`）
+2. 接口返回aiflow系统的用户编码（`userCode`）
+3. 后续调用其他接口时，使用贵公司的用户编码（`customUserCode`）作为参数
+
+**示例场景：**
+- 创建三方流程定义时，`managerUserCode`、`operationUserCode`、`configUserCode`、`createBy` 等字段需要传入贵公司的用户编码
+- 同步任务时，`initiator`、`assigneeUserCode` 等字段需要传入贵公司的用户编码
+
+> **注意：** 如果用户已经绑定过，再次调用绑定接口会直接返回已绑定的aiflow用户编码，不会重复绑定。
+
+### 1.2 签名机制
 
 所有aiflow提供的接口都需要使用签名验证（`A-Signature` Header）。
 
@@ -84,14 +102,14 @@ cd aflow-client-python
 pip install -e .
 ```
 
-### 1.2 通用请求头
+### 1.3 通用请求头
 
 ```
 Content-Type: application/json
 A-Signature: {签名十六进制字符串}
 ```
 
-### 1.3 通用响应格式
+### 1.4 通用响应格式
 
 **成功响应：**
 ```json
@@ -124,9 +142,190 @@ A-Signature: {签名十六进制字符串}
 
 ---
 
-## 2. 基础数据同步接口
+## 2. 用户编码绑定接口
 
-### 2.1 部门数据同步接口
+### 2.1 用户编码绑定接口
+
+**接口地址：** `POST /aflow/api/auth/bind`
+
+**接口说明：** 将贵公司系统的用户编码与aiflow系统的用户编码进行绑定。绑定后，在调用其他接口时可以使用贵公司的用户编码作为参数。
+
+**请求体：**
+```json
+{
+  "customUserCode": "贵公司系统的用户唯一ID",
+  "linkUserCode": "三方办公平台的用户ID（可选，如飞书user_id）",
+  "phoneNumber": "用户手机号（可选）"
+}
+```
+
+**请求参数说明：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| customUserCode | String | 是 | 贵公司系统的用户唯一ID，后续接口中使用的用户编码 |
+| linkUserCode | String | 否 | 三方办公平台的用户ID（如飞书user_id），与phoneNumber二选一，优先级高于phoneNumber |
+| phoneNumber | String | 否 | 用户手机号，与linkUserCode二选一 |
+
+**响应体：**
+```json
+{
+  "status": 0,
+  "msg": "success",
+  "data": "aiflow系统的用户编码（userCode）"
+}
+```
+
+**Python调用示例：**
+
+```python
+from auth import ASign, Credential
+import requests
+import json
+
+credential = Credential(
+    enterprise_code="COMPANY001",
+    app_id="APP001",
+    app_secret="your_app_secret"
+)
+
+# 方式1：使用linkUserCode（推荐，如果已集成三方办公平台）
+request_data = {
+    "customUserCode": "ODOO_USER_001",  # 贵公司Odoo系统的用户ID
+    "linkUserCode": "feishu_user_12345"  # 飞书用户ID（如果已集成飞书）
+}
+
+# 方式2：使用phoneNumber（如果没有集成三方办公平台）
+# request_data = {
+#     "customUserCode": "ODOO_USER_001",  # 贵公司Odoo系统的用户ID
+#     "phoneNumber": "13800138000"  # 用户手机号
+# }
+
+request_body = json.dumps(request_data, ensure_ascii=False)
+signature = ASign.get_hex_signature(credential, request_body)
+
+headers = {
+    "Content-Type": "application/json",
+    "A-Signature": signature
+}
+
+response = requests.post(
+    "https://aiflow.example.com/aflow/api/auth/bind",
+    headers=headers,
+    data=request_body.encode('utf-8')
+)
+
+result = response.json()
+if result['status'] == 0:
+    aiflow_user_code = result['data']
+    print(f"绑定成功，aiflow用户编码: {aiflow_user_code}")
+    # 注意：后续接口中仍使用 customUserCode（ODOO_USER_001），而不是返回的 aiflow_user_code
+else:
+    print(f"绑定失败: {result['msg']}")
+```
+
+**使用场景示例：**
+
+在创建三方流程定义之前，需要先绑定相关用户：
+
+```python
+from auth import ASign, Credential
+import requests
+import json
+
+credential = Credential(
+    enterprise_code="COMPANY001",
+    app_id="APP001",
+    app_secret="your_app_secret"
+)
+
+# 1. 先绑定流程负责人
+def bind_user(custom_user_code, phone_number=None, link_user_code=None):
+    """绑定用户编码"""
+    request_data = {
+        "customUserCode": custom_user_code
+    }
+    if link_user_code:
+        request_data["linkUserCode"] = link_user_code
+    elif phone_number:
+        request_data["phoneNumber"] = phone_number
+    
+    request_body = json.dumps(request_data, ensure_ascii=False)
+    signature = ASign.get_hex_signature(credential, request_body)
+    
+    headers = {
+        "Content-Type": "application/json",
+        "A-Signature": signature
+    }
+    
+    response = requests.post(
+        "https://aiflow.example.com/aflow/api/auth/bind",
+        headers=headers,
+        data=request_body.encode('utf-8')
+    )
+    
+    result = response.json()
+    if result['status'] == 0:
+        print(f"✅ 用户 {custom_user_code} 绑定成功")
+        return True
+    else:
+        print(f"❌ 用户 {custom_user_code} 绑定失败: {result['msg']}")
+        return False
+
+# 2. 绑定所有需要的用户
+bind_user("ODOO_MANAGER_001", phone_number="13800138001")  # 流程负责人
+bind_user("ODOO_OPERATION_001", phone_number="13800138002")  # 运营负责人
+bind_user("ODOO_CONFIG_001", phone_number="13800138003")  # 配置负责人
+bind_user("ODOO_CREATOR_001", phone_number="13800138004")  # 创建人
+
+# 3. 创建三方流程定义（使用贵公司的用户编码）
+request_data = {
+    "title": "销售订单审批流程",
+    "initiateUrl": {
+        "h5Url": "https://odoo.example.com/h5/sales/apply",
+        "webUrl": "https://odoo.example.com/web/sales/apply"
+    },
+    "detailUrl": {
+        "h5Url": "https://odoo.example.com/h5/sales/detail",
+        "webUrl": "https://odoo.example.com/web/sales/detail"
+    },
+    "categoryId": "GROUP001",
+    "managerUserCode": "ODOO_MANAGER_001",  # 使用贵公司的用户编码
+    "operationUserCode": "ODOO_OPERATION_001",  # 使用贵公司的用户编码
+    "configUserCode": "ODOO_CONFIG_001",  # 使用贵公司的用户编码
+    "createBy": "ODOO_CREATOR_001"  # 使用贵公司的用户编码
+}
+
+request_body = json.dumps(request_data, ensure_ascii=False)
+signature = ASign.get_hex_signature(credential, request_body)
+
+headers = {
+    "Content-Type": "application/json",
+    "A-Signature": signature
+}
+
+response = requests.post(
+    "https://aiflow.example.com/aflow/api/flow/create_third_party",
+    headers=headers,
+    data=request_body.encode('utf-8')
+)
+
+result = response.json()
+if result['status'] == 0:
+    print(f"流程创建成功: {result['data']['flowCode']}")
+```
+
+**注意事项：**
+1. `customUserCode` 是必填字段，必须是贵公司系统的用户唯一ID
+2. `linkUserCode` 和 `phoneNumber` 二选一，如果已集成三方办公平台（如飞书），推荐使用 `linkUserCode`
+3. 如果用户已经绑定过，再次调用会直接返回已绑定的aiflow用户编码
+4. 绑定成功后，后续接口中仍使用 `customUserCode`（贵公司的用户编码），而不是返回的aiflow用户编码
+
+---
+
+## 3. 基础数据同步接口
+
+### 3.1 部门数据同步接口
 
 **接口地址：** `POST /aflow/api/sys/sync/department`
 
@@ -227,7 +426,7 @@ result = response.json()
 print(f"成功: {result['data']['successCount']}, 失败: {result['data']['failCount']}")
 ```
 
-### 2.2 用户数据同步接口
+### 3.2 用户数据同步接口
 
 **接口地址：** `POST /aflow/api/sys/sync/user`
 
@@ -350,9 +549,9 @@ print(f"成功: {result['data']['successCount']}, 失败: {result['data']['failC
 
 ---
 
-## 3. SSO单点登录接口
+## 4. SSO单点登录接口
 
-### 3.1 OAuth2回调接口
+### 4.1 OAuth2回调接口
 
 **接口地址：** `GET /aflow/api/oauth2/callback`
 
@@ -381,7 +580,7 @@ https://odoo.example.com/odoo/api/oauth2/authorize?client_id=APP001&redirect_uri
 https://aiflow.example.com/aflow/api/oauth2/callback?code=authorization_code&state=random_state_string
 ```
 
-### 3.2 Token刷新接口
+### 4.2 Token刷新接口
 
 **接口地址：** `POST /aflow/api/oauth2/refresh`
 
@@ -430,9 +629,11 @@ if result['status'] == 0:
 
 ---
 
-## 4. 任务中心简易集成接口
+## 5. 任务中心简易集成接口
 
-### 4.1 创建三方流程定义接口
+### 5.1 创建三方流程定义接口
+
+> **重要提示：** 接口中的用户编码字段（`managerUserCode`、`operationUserCode`、`configUserCode`、`createBy`）必须使用**贵公司的用户编码**（`customUserCode`）。在使用这些用户编码之前，请先调用 `/aflow/api/auth/bind` 接口进行绑定。详见 [用户编码绑定接口](#21-用户编码绑定接口)。
 
 **接口地址：** `POST /aflow/api/flow/create_third_party`
 
@@ -518,8 +719,9 @@ credential = Credential(
     app_secret="your_app_secret"
 )
 
+# 注意：以下用户编码（ODOO_USER_001等）是贵公司Odoo系统的用户ID
+# 在使用前需要先调用 /aflow/api/auth/bind 接口进行绑定
 request_data = {
-    "flowCode": "SALES_ORDER",
     "title": "销售订单审批流程",
     "initiateUrl": {
         "h5Url": "https://odoo.example.com/h5/sales/apply",
@@ -529,11 +731,11 @@ request_data = {
         "h5Url": "https://odoo.example.com/h5/sales/detail",
         "webUrl": "https://odoo.example.com/web/sales/detail"
     },
-    "groupId": "GROUP001",
-    "managerUserCode": "USER001",
-    "operationUserCode": "USER002",
-    "configUserCode": "USER003",
-    "createBy": "USER001",
+    "categoryId": "GROUP001",
+    "managerUserCode": "ODOO_USER_001",  # 贵公司Odoo系统的用户ID
+    "operationUserCode": "ODOO_USER_002",  # 贵公司Odoo系统的用户ID
+    "configUserCode": "ODOO_USER_003",  # 贵公司Odoo系统的用户ID
+    "createBy": "ODOO_USER_001",  # 贵公司Odoo系统的用户ID
     "allowedApplyTerminals": ["pc", "mobile"],
     "allowedApplyRule": {
         "allowedApplyType": "all"
@@ -562,7 +764,7 @@ if result['status'] == 0:
     print(f"流程编码: {result['data']['flowCode']}, 版本: {result['data']['flowVersion']}")
 ```
 
-### 4.2 三方流程定义上线接口
+### 5.2 三方流程定义上线接口
 
 **接口地址：** `POST /aflow/api/flow/online_third_party`
 
@@ -626,7 +828,9 @@ if result['status'] == 0:
     print("流程上线成功")
 ```
 
-### 4.3 任务同步接口
+### 5.3 任务同步接口
+
+> **重要提示：** 接口中的用户编码字段（`initiator`、`assigneeUserCode`、`ccUsers[].userCode`）必须使用**贵公司的用户编码**（`customUserCode`）。在使用这些用户编码之前，请先调用 `/aflow/api/auth/bind` 接口进行绑定。详见 [用户编码绑定接口](#21-用户编码绑定接口)。
 
 **接口地址：** `POST /aflow/api/order/sync/task`
 
@@ -635,27 +839,28 @@ if result['status'] == 0:
 **请求体：**
 ```json
 {
-  "orderId": 123456,
+  "thirdOrderId": 123456,
   "orderStatus": "ing",
   "orderResult": "ing",
-  "initiator": "发起人编号",
+  "initiator": "发起人编号（贵公司用户编码，需先绑定）",
   "version": 1,
   "parentOrderId": 123450,
   "parentTaskOrderId": "父任务订单号",
   "businessKey": "业务编码",
   "createTime": "2025-01-24 10:00:00",
   "updateTime": "2025-01-24 15:30:00",
+  "thirdFlowCode": "三方流程编码（新建订单时必填，已存在订单时可不传）",
   "ccUsers": [
     {
-      "userCode": "抄送人编码",
+      "userCode": "抄送人编码（贵公司用户编码，需先绑定）",
       "ccTime": "2025-01-24 10:00:00"
     }
   ],
   "tasks": [
     {
-      "taskId": "任务ID",
+      "thirdTaskId": "任务ID（外部系统）",
       "taskName": "任务名称",
-      "assigneeUserCode": ["处理人编码1", "处理人编码2"],
+      "assigneeUserCode": ["处理人编码1（贵公司用户编码，需先绑定）", "处理人编码2（贵公司用户编码，需先绑定）"],
       "taskStatus": "ing",
       "taskResult": "accept",
       "deadLine": "2025-01-25 18:00:00",
@@ -672,23 +877,24 @@ if result['status'] == 0:
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| orderId | Long | 是 | 流程订单号 |
+| thirdOrderId | Long | 是 | 流程订单号（外部系统） |
 | orderStatus | String | 是 | 订单状态：new-新建，ing-处理中，over-完成（默认ing） |
 | orderResult | String | 是 | 订单结果：ing-处理中，pass-已完成，reject-已拒绝，revoke-已撤销，delete-已删除 |
-| initiator | String | 是 | 发起人编号 |
+| initiator | String | 是 | 发起人编号（贵公司用户编码，需先绑定） |
 | version | Integer | 否 | 订单版本（有就传，没有可以不传） |
 | parentOrderId | Long | 否 | 父订单号（有就传，没有可以不传） |
 | parentTaskOrderId | String | 否 | 父任务订单号（有就传，没有可以不传） |
 | businessKey | String | 是 | 业务编码，用于记录三方系统跟流程引擎对接的唯一映射Key |
 | createTime | String | 是 | 流程订单创建时间（格式：yyyy-MM-dd HH:mm:ss） |
 | updateTime | String | 是 | 流程订单更新时间（格式：yyyy-MM-dd HH:mm:ss） |
+| thirdFlowCode | String | 否 | 三方流程编码（新建订单时必填，已存在订单时可不传） |
 | ccUsers | Array | 否 | 抄送人列表（非必传，有就传，没有就不传） |
-| ccUsers[].userCode | String | 是 | 抄送人编码 |
+| ccUsers[].userCode | String | 是 | 抄送人编码（贵公司用户编码，需先绑定） |
 | ccUsers[].ccTime | String | 是 | 抄送时间（格式：yyyy-MM-dd HH:mm:ss） |
 | tasks | Array | 是 | 任务列表（包含待办和已完成任务） |
-| tasks[].taskId | String | 是 | 任务ID |
+| tasks[].thirdTaskId | String | 是 | 任务ID（外部系统） |
 | tasks[].taskName | String | 是 | 任务名称 |
-| tasks[].assigneeUserCode | Array | 是 | 处理人编码列表（可能有多个） |
+| tasks[].assigneeUserCode | Array | 是 | 处理人编码列表（可能有多个，贵公司用户编码，需先绑定） |
 | tasks[].taskStatus | String | 是 | 任务状态：new-新建，ing-处理中，over-完成（默认ing） |
 | tasks[].taskResult | String | 是 | 任务处理结果：new-新建，accept-领取，pass-通过，reject-拒绝，revoke-撤销，rebut-驳回 |
 | tasks[].deadLine | String | 是 | 处理截止时间（格式：yyyy-MM-dd HH:mm:ss） |
@@ -733,26 +939,28 @@ credential = Credential(
 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 deadline = (datetime.now().replace(hour=18, minute=0, second=0)).strftime("%Y-%m-%d %H:%M:%S")
 
+# 注意：以下用户编码（ODOO_USER_001等）是贵公司Odoo系统的用户ID
+# 在使用前需要先调用 /aflow/api/auth/bind 接口进行绑定
 request_data = {
-    "orderId": 123456,
+    "thirdOrderId": 123456,
     "orderStatus": "ing",
     "orderResult": "ing",
-    "initiator": "USER001",
+    "initiator": "ODOO_USER_001",  # 贵公司Odoo系统的用户ID
     "version": 1,
     "businessKey": "SALES_ORDER_20250124001",
     "createTime": now,
     "updateTime": now,
     "ccUsers": [
         {
-            "userCode": "USER003",
+            "userCode": "ODOO_USER_003",  # 贵公司Odoo系统的用户ID
             "ccTime": now
         }
     ],
     "tasks": [
         {
-            "taskId": "TASK001",
+            "thirdTaskId": "TASK001",
             "taskName": "部门经理审批",
-            "assigneeUserCode": ["USER002"],
+            "assigneeUserCode": ["ODOO_USER_002"],  # 贵公司Odoo系统的用户ID
             "taskStatus": "new",
             "taskResult": "new",
             "deadLine": deadline,
@@ -785,11 +993,11 @@ if result['status'] == 0:
 
 ---
 
-## 5. 全面流程引擎集成接口
+## 6. 全面流程引擎集成接口
 
-### 5.1 流程定义管理接口
+### 6.1 流程定义管理接口
 
-#### 5.1.1 创建流程定义接口
+#### 6.1.1 创建流程定义接口
 
 **接口地址：** `POST /aflow/api/flow/create`
 
@@ -826,13 +1034,13 @@ if result['status'] == 0:
 }
 ```
 
-#### 5.1.2 更新流程定义接口
+#### 6.1.2 更新流程定义接口
 
 **接口地址：** `PUT /aflow/api/flow/update`
 
 **接口说明：** 更新流程定义
 
-#### 5.1.3 发布流程接口
+#### 6.1.3 发布流程接口
 
 **接口地址：** `POST /aflow/api/flow/publish`
 
@@ -858,7 +1066,7 @@ if result['status'] == 0:
 }
 ```
 
-### 5.2 表单同步接口
+### 6.2 表单同步接口
 
 **接口地址：** `POST /aflow/api/form/sync`
 
@@ -957,7 +1165,7 @@ if result['status'] == 0:
     print("表单同步成功")
 ```
 
-### 5.3 审批日志接口
+### 6.3 审批日志接口
 
 **接口地址：** `POST /aflow/api/order/approval/log`
 
