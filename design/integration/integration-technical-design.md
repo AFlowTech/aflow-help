@@ -23,7 +23,25 @@
 
 ## 1. 通用说明
 
-### 1.1 签名机制
+### 1.1 用户编码绑定说明
+
+**重要提示：** 在调用aiflow接口时，如果接口参数中包含用户编码（如 `managerUserCode`、`operationUserCode`、`configUserCode`、`createBy`、`initiator`、`assigneeUserCode` 等），这些用户编码必须是**贵公司系统的用户唯一ID**（即 `customUserCode`）。
+
+在使用这些用户编码之前，**必须先调用用户绑定接口**（`/aflow/api/auth/bind`）将贵公司的用户编码与aiflow系统的用户编码进行绑定、绑定的时机是般建议为贵公司的用户中心产生用户时、调用我们绑定一次即可。
+
+**绑定流程：**
+1. 调用 `/aflow/api/auth/bind` 接口，传入贵公司的用户编码（`customUserCode`）和关联信息（`linkUserCode` 或 `phoneNumber`）
+2. 接口返回aiflow系统的用户编码（`userCode`）
+3. 后续调用其他接口时，使用贵公司的用户编码（`customUserCode`）作为参数
+
+**示例场景：**
+- 创建三方流程定义时，`managerUserCode`、`operationUserCode`、`configUserCode`、`createBy` 等字段需要传入贵公司的用户编码
+- 同步任务时，`initiator`、`assigneeUserCode` 等字段需要传入贵公司的用户编码
+
+> **注意：** 如果用户已经绑定过，再次调用绑定接口会直接返回已绑定的aiflow用户编码，不会重复绑定。
+
+
+### 1.2 签名机制
 
 所有aiflow提供的接口都需要使用签名验证（`A-Signature` Header），Odoo提供的接口也需要使用相同的签名机制。
 
@@ -32,23 +50,34 @@
 #### 使用 Python SDK（推荐）
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
+import json
 
 # 创建认证凭证
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
 )
 
 # 生成签名
-request_body = '{"departments": [...]}'
-signature = ASign.get_hex_signature(credential, request_body)
+request_data = '{"departments": [...]}'
+# dump的时候，不要使用 ensure_ascii=False
+request_body = json.dumps(request_data)
+
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
+# 如果credential中的变量已经注入到系统变量中，可以通过
+    # os.getenv("APP_ID") 来获取app_id
+    # os.getenv("ENTERPRISE_CODE") 来获取enterprise_code
+    # os.getenv("APP_SECRET") 来app_secret
+# 那么创建签名对象时，不需要再传入credential
+# signature = sig_generator.create_signature(request_body)
 
 # 设置请求头
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 ```
 
@@ -73,20 +102,19 @@ pip install -e .
 
 > **详细签名算法实现请参考：** [技术原理文档 - 签名算法](technical-details.md#签名算法)（包含签名生成和验证的详细实现）
 
-### 1.2 通用请求头
+### 1.3 通用请求头
 
 ```
 Content-Type: application/json
 A-Signature: {签名十六进制字符串}
 ```
 
-### 1.3 通用响应格式
+### 1.4 通用响应格式
 
 **成功响应：**
 ```json
 {
   "status": 0,
-  "msg": "success",
   "data": {
     // 响应数据
   }
@@ -97,11 +125,7 @@ A-Signature: {签名十六进制字符串}
 ```json
 {
   "status": -4002,
-  "msg": "请求参数错误",
-  "data": {
-    "errorCode": "INVALID_PARAMETER",
-    "errorMessage": "部门ID不能为空"
-  }
+  "msg": "请求参数错误"
 }
 ```
 
@@ -122,16 +146,198 @@ A-Signature: {签名十六进制字符串}
 
 ---
 
-## 2. 基础数据同步方案
+### 2.1 用户编码绑定接口
+
+**接口地址：** `POST /aflow/api/auth/bind`
+
+**接口说明：** 将贵公司系统的用户编码与aiflow系统的用户编码进行绑定。绑定后，在调用其他接口时可以使用贵公司的用户编码作为参数。
+
+**请求体：**
+```json
+{
+  "customUserCode": "贵公司系统的用户唯一ID",
+  "linkUserCode": "三方办公平台的用户ID（可选，如飞书user_id）",
+  "phoneNumber": "用户手机号（可选）"
+}
+```
+
+**请求参数说明：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| customUserCode | String | 是 | 贵公司系统的用户唯一ID，后续接口中使用的用户编码 |
+| linkUserCode | String | 否 | 三方办公平台的用户ID（如飞书user_id），与phoneNumber二选一，优先级高于phoneNumber |
+| phoneNumber | String | 否 | 用户手机号，与linkUserCode二选一 |
+
+**响应体：**
+```json
+{
+  "status": 0,
+  "msg": "success",
+  "data": "aiflow系统的用户编码（userCode）"
+}
+```
+
+**Python调用示例：**
+
+```python
+from aflow_client_python import ASignature
+import requests
+import json
+
+credential = dict(
+    enterprise_code="COMPANY001",
+    app_id="APP001",
+    app_secret="your_app_secret"
+)
+
+# 方式1：使用linkUserCode（推荐，如果已集成三方办公平台）
+request_data = {
+    "customUserCode": "ODOO_USER_001",  # 贵公司Odoo系统的用户ID
+    "linkUserCode": "feishu_user_12345"  # 飞书用户ID（如果已集成飞书）
+}
+
+# 方式2：使用phoneNumber（如果没有集成三方办公平台）
+# request_data = {
+#     "customUserCode": "ODOO_USER_001",  # 贵公司Odoo系统的用户ID
+#     "phoneNumber": "13800138000"  # 用户手机号
+# }
+
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
+
+headers = {
+    "Content-Type": "application/json",
+    "X-A-Signature": signature
+}
+
+response = requests.post(
+    "https://aiflow.example.com/aflow/api/auth/bind",
+    headers=headers,
+    json=request_data
+)
+
+result = response.json()
+if result['status'] == 0:
+    aiflow_user_code = result['data']
+    print(f"绑定成功，aiflow用户编码: {aiflow_user_code}")
+    # 注意：后续接口中仍使用 customUserCode（ODOO_USER_001），而不是返回的 aiflow_user_code
+else:
+    print(f"绑定失败: {result['msg']}")
+```
+
+**使用场景示例：**
+
+在创建三方流程定义之前，需要先绑定相关用户：
+
+```python
+from aflow_client_python import ASignature
+import requests
+import json
+
+credential = Credential(
+    enterprise_code="COMPANY001",
+    app_id="APP001",
+    app_secret="your_app_secret"
+)
+
+# 1. 先绑定流程负责人
+def bind_user(custom_user_code, phone_number=None, link_user_code=None):
+    """绑定用户编码"""
+    request_data = {
+        "customUserCode": custom_user_code
+    }
+    if link_user_code:
+        request_data["linkUserCode"] = link_user_code
+    elif phone_number:
+        request_data["phoneNumber"] = phone_number
+    
+    request_body = json.dumps(request_data)
+    sig_generator = ASignature()
+    signature = sig_generator.create_signature(request_body)
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-A-Signature": signature
+    }
+    
+    response = requests.post(
+        "https://aiflow.example.com/aflow/api/auth/bind",
+        headers=headers,
+        json=request_data
+    )
+    
+    result = response.json()
+    if result['status'] == 0:
+        print(f"✅ 用户 {custom_user_code} 绑定成功")
+        return True
+    else:
+        print(f"❌ 用户 {custom_user_code} 绑定失败: {result['msg']}")
+        return False
+
+# 2. 绑定所有需要的用户
+bind_user("ODOO_MANAGER_001", phone_number="13800138001")  # 流程负责人
+bind_user("ODOO_OPERATION_001", phone_number="13800138002")  # 运营负责人
+bind_user("ODOO_CONFIG_001", phone_number="13800138003")  # 配置负责人
+bind_user("ODOO_CREATOR_001", phone_number="13800138004")  # 创建人
+
+# 3. 创建三方流程定义（使用贵公司的用户编码）
+request_data = {
+    "title": "销售订单审批流程",
+    "initiateUrl": {
+        "h5Url": "https://odoo.example.com/h5/sales/apply",
+        "webUrl": "https://odoo.example.com/web/sales/apply"
+    },
+    "detailUrl": {
+        "h5Url": "https://odoo.example.com/h5/sales/detail",
+        "webUrl": "https://odoo.example.com/web/sales/detail"
+    },
+    "categoryId": "GROUP001",
+    "managerUserCode": "ODOO_MANAGER_001",  # 使用贵公司的用户编码
+    "operationUserCode": "ODOO_OPERATION_001",  # 使用贵公司的用户编码
+    "configUserCode": "ODOO_CONFIG_001",  # 使用贵公司的用户编码
+    "createBy": "ODOO_CREATOR_001"  # 使用贵公司的用户编码
+}
+
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body)
+
+headers = {
+    "Content-Type": "application/json",
+    "X-A-Signature": signature
+}
+
+response = requests.post(
+    "https://aiflow.example.com/aflow/api/flow/create_third_party",
+    headers=headers,
+    json=request_data
+)
+
+result = response.json()
+if result['status'] == 0:
+    print(f"流程创建成功: {result['data']['flowCode']}")
+```
+
+**注意事项：**
+1. `customUserCode` 是必填字段，必须是贵公司系统的用户唯一ID
+2. `linkUserCode` 和 `phoneNumber` 二选一，如果已集成三方办公平台（如飞书），推荐使用 `linkUserCode`
+3. 如果用户已经绑定过，再次调用会直接返回已绑定的aiflow用户编码
+4. 绑定成功后，后续接口中仍使用 `customUserCode`（贵公司的用户编码），而不是返回的aiflow用户编码
+
+---
+
+## 3. 基础数据同步方案
 
 > **重要提示**：基础数据同步有两种方案可选，详见 [主方案文档 - 基础数据同步方案](erp-wms-integration-design.md#21-基础数据同步方案)  
 > **技术原理和时序图：** 参考 [技术原理文档 - 基础数据同步方案](technical-details.md#基础数据同步方案)（包含部门数据同步时序图、用户绑定流程等）
 
-### 2.1 方案一：ERP主动推送（需要以下接口）
+### 3.1 方案一：ERP主动推送（需要以下接口）
 
 如果选择方案一，aiflow需要提供以下接口供ERP推送数据。
 
-#### 2.1.1 部门数据同步接口
+#### 3.1.1 部门数据同步接口
 
 **接口地址：** `POST /aflow/api/sys/sync/department`
 
@@ -166,7 +372,7 @@ A-Signature: {签名十六进制字符串}
 }
 ```
 
-#### 2.1.2 用户数据同步接口
+#### 3.1.2 用户数据同步接口
 
 **接口地址：** `POST /aflow/api/sys/sync/user`
 
@@ -222,7 +428,7 @@ A-Signature: {签名十六进制字符串}
 
 > **技术原理：** 参考 [技术原理文档 - 用户数据同步接口](technical-details.md#用户数据同步接口)（包含用户数据同步时序图和业务逻辑）
 
-### 2.2 方案二：aiflow主动同步钉钉（推荐）
+### 3.2 方案二：aiflow主动同步钉钉（推荐）
 
 如果选择方案二（推荐），aiflow将使用现有的钉钉同步机制，**无需开发推送接口**。ERP也无需开发推送逻辑。
 
@@ -234,11 +440,11 @@ A-Signature: {签名十六进制字符串}
 
 ---
 
-## 3. SSO单点登录对接方案
+## 4. SSO单点登录对接方案
 
 > **技术原理和时序图：** 参考 [技术原理文档 - SSO单点登录对接方案](technical-details.md#sso单点登录对接方案oauth-20)（包含OAuth2原理图、接口调用时序图、Token刷新时序图、aiflow系统改动方案等）
 
-### 3.1 OAuth2流程说明
+### 4.1 OAuth2流程说明
 
 采用标准的OAuth 2.0授权码（Authorization Code）流程。
 
@@ -251,7 +457,7 @@ A-Signature: {签名十六进制字符串}
 6. aiflow使用access_token获取用户信息
 7. aiflow创建/更新用户并创建会话（JWT Token）
 
-### 3.2 SSO配置说明
+### 4.2 SSO配置说明
 
 aiflow支持私有化部署，通过配置控制是否启用SSO登录。
 
@@ -273,13 +479,31 @@ custom:
   - 启用SSO时必填
   - 格式：`https://odoo.example.com/login`
 
+**ERP OAuth2配置（对接企业配置）：**
+- 通过对接企业配置 `linkEnterprise.linkConfig` 写入 OAuth2 相关信息
+- 使用 `appId`/`appSecret` 作为 OAuth2 `client_id`/`client_secret`
+- 端点地址可按企业配置调整
+
+**配置示例（linkConfig JSON）：**
+```json
+{
+  "appId": "client_id",
+  "appSecret": "client_secret",
+  "oauthAuthorizeUrl": "https://erp.example.com/oauth2/authorize",
+  "oauthTokenUrl": "https://erp.example.com/oauth2/token",
+  "oauthUserInfoUrl": "https://erp.example.com/oauth2/userinfo",
+  "oauthRedirectUri": "https://aiflow.example.com/aflow/api/oauth2/callback",
+  "oauthScope": "basic"
+}
+```
+
 **测试支持：**
 - 为了测试SSO登录功能，aiflow项目工程中需要模拟实现一个Odoo登录页
 - 模拟登录页需要实现OAuth2授权端点功能，完成整个功能的闭环测试
 
-### 3.3 Odoo需要提供的OAuth2接口
+### 4.3 Odoo需要提供的OAuth2接口
 
-#### 3.3.1 授权端点（Authorization Endpoint）
+#### 4.3.1 授权端点（Authorization Endpoint）
 
 **接口地址：** `GET /odoo/api/oauth2/authorize`
 
@@ -294,40 +518,54 @@ custom:
 - 成功：重定向到 `redirect_uri?code=authorization_code&state=random_state_string`
 - 失败：重定向到 `redirect_uri?error=error_code&error_description=description`
 
-#### 3.3.2 令牌端点（Token Endpoint）
+#### 4.3.2 令牌端点（Token Endpoint）
 
 **接口地址：** `POST /odoo/api/oauth2/token`
 
 **请求头：**
 ```
-Content-Type: application/x-www-form-urlencoded
-Authorization: Basic {base64(client_id:client_secret)}
+Content-Type: application/json
 ```
 
-**请求参数（form-data）：**
-- `grant_type`: `authorization_code` 或 `refresh_token`
-- `code`: 授权码（当grant_type=authorization_code时）
-- `refresh_token`: 刷新令牌（当grant_type=refresh_token时）
-- `redirect_uri`: 必须与授权请求中的redirect_uri一致
+**请求参数（JSON）：**
+- `clientId`: aiflow配置的OAuth2 clientId
+- `clientSecret`: aiflow配置的OAuth2 clientSecret
+- `grantType`: `authorization_code`
+- `code`: 授权码
+- `redirectUri`: 必须与授权请求中的redirect_uri一致
 
 **响应：**
 ```json
 {
-  "access_token": "访问令牌",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "刷新令牌",
-  "scope": "read write"
+  "accessToken": "访问令牌",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "refreshToken": "刷新令牌"
 }
 ```
 
 > **Odoo接口标准：** 参考 [技术原理文档 - Odoo需要提供的接口标准](technical-details.md#odoo需要提供的接口标准)（详细的接口要求和实现说明）
 
-#### 3.3.3 用户信息端点（User Info Endpoint）
+#### 4.3.3 用户信息端点（User Info Endpoint）
 
-**接口地址：** `GET /odoo/api/oauth2/userinfo`
+**接口地址：** `POST /odoo/api/oauth2/userinfo`
 
-> **重要提示**：如果选择**方案二：aiflow主动同步钉钉**，此接口必须返回`phone`（手机号）或`email`（邮箱）以及`deptId`（部门ID），用于用户绑定。
+**请求头：**
+```
+Authorization: Bearer {accessToken}
+```
+
+**响应：**
+```json
+{
+  "userId": "ERP用户ID",
+  "phoneNumber": "手机号",
+  "email": "邮箱",
+  "deptId": "部门ID"
+}
+```
+
+> **重要提示**：如果选择**方案二：aiflow主动同步钉钉**，此接口必须返回`phoneNumber`（手机号），用于用户绑定。`deptId`目前不参与绑定。
 
 **请求头：**
 ```
@@ -352,9 +590,9 @@ Authorization: Bearer {access_token}
 - `deptId`必须返回（用于建立部门映射关系）
 - `userId`必须返回（用于建立用户映射关系）
 
-### 3.4 aiflow需要提供的接口
+### 4.4 aiflow需要提供的接口
 
-#### 3.4.1 OAuth2回调接口
+#### 4.4.1 OAuth2回调接口
 
 **接口地址：** `GET /aflow/api/oauth2/callback`
 
@@ -366,7 +604,7 @@ Authorization: Bearer {access_token}
 - 成功：重定向到原始请求页面
 - 失败：重定向到错误页面
 
-#### 3.4.2 Token刷新接口
+#### 4.4.2 Token刷新接口
 
 **接口地址：** `POST /aflow/api/oauth2/refresh`
 
@@ -394,18 +632,18 @@ Authorization: Bearer {access_token}
 
 ---
 
-## 4. 任务中心简易集成方案
+## 5. 任务中心简易集成方案
 
 > **技术原理和时序图：** 参考 [技术原理文档 - 任务中心统一简易集成方案](technical-details.md#任务中心统一简易集成方案)（包含流程定义改造、第三方流程定义创建、任务同步时序图等）
 
-### 4.1 创建三方流程定义接口
+### 5.1 创建三方流程定义接口
 
 **接口地址：** `POST /aflow/api/flow/create_third_party`
 
 **请求体：**
 ```json
 {
-  "flowCode": "三方业务流程编码",
+  "thirdFlowCode": "三方业务流程编码",
   "title": "流程标题",
   "initiateUrl": {
     "h5Url": "H5发起页地址",
@@ -440,7 +678,7 @@ Authorization: Bearer {access_token}
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| flowCode | String | 是 | 三方业务流程编码 |
+| thirdFlowCode | String | 是 | 三方业务流程编码 |
 | businessKey | String | 是 | 业务单据号 |
 | title | String | 是 | 流程标题 |
 | initiateUrl | Object | 是 | 流程发起页地址 |
@@ -478,7 +716,7 @@ Authorization: Bearer {access_token}
 }
 ```
 
-### 4.2 三方流程定义上线接口
+### 5.2 三方流程定义上线接口
 
 **接口地址：** `POST /aflow/api/flow/online_third_party`
 
@@ -507,7 +745,7 @@ Authorization: Bearer {access_token}
 > - 调用 `com.aflow.base.controller.FlowDefinitionController#online` 操作上线
 > - 需要实现三方流程专用的校验器（`FlowCheckProcessor`），只校验接口中传递的数据，不需要正常流程那么复杂的校验
 
-### 4.3 任务同步接口
+### 5.3 任务同步接口
 
 > **说明：** 三方流程实际是在三方引擎系统中处理，业务引擎系统实时将整个订单的结果同步过来，包括待办任务和已完成任务。
 
@@ -516,7 +754,7 @@ Authorization: Bearer {access_token}
 **请求体：**
 ```json
 {
-  "orderId": 123456,
+  "thirdOrderId": 123456,
   "orderStatus": "ing",
   "orderResult": "ing",
   "initiator": "发起人编号",
@@ -534,7 +772,7 @@ Authorization: Bearer {access_token}
   ],
   "tasks": [
     {
-      "taskId": "任务ID",
+      "thirdTaskId": "任务ID",
       "taskName": "任务名称",
       "assigneeUserCode": ["处理人编码1", "处理人编码2"],
       "taskStatus": "ing",
@@ -554,7 +792,7 @@ Authorization: Bearer {access_token}
 
 | 参数                       | 类型 | 必填 | 说明                                                           |
 |--------------------------|------|------|--------------------------------------------------------------|
-| orderId                  | Long | 是 | 流程订单号                                                        |
+| thirdOrderId             | Long | 是 | 流程订单号                                                        |
 | orderStatus              | String | 是 | 订单状态：new-新建，ing-处理中，over-完成（默认ing）                           |
 | orderResult              | String | 是 | 订单结果：ing-处理中，pass-已完成，reject-已拒绝，revoke-已撤销，delete-已删除       |
 | initiator                | String | 是 | 发起人编号                                                        |
@@ -568,7 +806,7 @@ Authorization: Bearer {access_token}
 | ccUsers[].userCode       | String | 是 | 抄送人编码                                                        |
 | ccUsers[].ccTime         | String | 是 | 抄送时间（格式：yyyy-MM-dd HH:mm:ss）                                 |
 | tasks                    | Array | 是 | 任务列表（包含待办和已完成任务）                                             |
-| tasks[].taskId           | String | 是 | 任务ID                                                         |
+| tasks[].thirdTaskId      | String | 是 | 任务ID                                                         |
 | tasks[].taskName         | String | 是 | 任务名称                                                         |
 | tasks[].assigneeUserCode | Array | 是 | 处理人编码列表（可能有多个）                                               |
 | tasks[].taskStatus       | String | 是 | 任务状态：new-新建，ing-处理中，over-完成（默认ing）                           |
@@ -599,7 +837,7 @@ Authorization: Bearer {access_token}
 }
 ```
 
-### 4.3.1 新任务通知功能
+### 5.3.1 新任务通知功能
 
 **功能说明：**
 - 当同步的任务是新增任务（`taskStatus` 为 `new` 或 `ing` 状态）时，aiflow会自动发送钉钉push消息通知处理人
@@ -623,13 +861,13 @@ Authorization: Bearer {access_token}
 
 ---
 
-## 5. 全面流程引擎集成方案
+## 6. 全面流程引擎集成方案
 
 > **技术原理和时序图：** 参考 [技术原理文档 - 全面使用流程中心的表单与流程引擎方案](technical-details.md#全面使用流程中心的表单与流程引擎方案)（包含流程定义管理、表单同步方案、ServiceTask数据推送时序图等）
 
-### 5.1 流程定义管理接口
+### 6.1 流程定义管理接口
 
-#### 5.1.1 创建流程定义接口
+#### 6.1.1 创建流程定义接口
 
 **接口地址：** `POST /aflow/api/flow/create`
 
@@ -657,11 +895,11 @@ Authorization: Bearer {access_token}
 }
 ```
 
-#### 5.1.2 更新流程定义接口
+#### 6.1.2 更新流程定义接口
 
 **接口地址：** `PUT /aflow/api/flow/update`
 
-#### 5.1.3 发布流程接口
+#### 6.1.3 发布流程接口
 
 **接口地址：** `POST /aflow/api/flow/publish`
 
@@ -685,7 +923,7 @@ Authorization: Bearer {access_token}
 }
 ```
 
-### 5.2 表单同步接口
+### 6.2 表单同步接口
 
 **接口地址：** `POST /aflow/api/form/sync`
 
@@ -721,7 +959,7 @@ Authorization: Bearer {access_token}
 
 > **表单同步方案：** 参考 [技术原理文档 - 表单同步方案](technical-details.md#表单同步方案)（包含Odoo表单自动同步到aiflow的机制）
 
-### 5.3 审批日志接口
+### 6.3 审批日志接口
 
 **接口地址：** `POST /aflow/api/order/approval/log`
 
@@ -754,9 +992,9 @@ Authorization: Bearer {access_token}
 }
 ```
 
-### 5.4 Odoo需要提供的接口
+### 6.4 Odoo需要提供的接口
 
-#### 5.4.1 接收流程数据接口
+#### 6.4.1 接收流程数据接口
 
 **接口地址：** `POST /odoo/api/workflow/receive`
 
@@ -779,7 +1017,7 @@ Authorization: Bearer {access_token}
 }
 ```
 
-#### 5.4.2 接收审批日志接口（可选）
+#### 6.4.2 接收审批日志接口（可选）
 
 **接口地址：** `POST /odoo/api/workflow/approval/log`
 

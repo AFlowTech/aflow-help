@@ -23,23 +23,33 @@
 **使用 Python SDK（推荐）：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 
 # 创建认证凭证
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
 )
 
 # 生成签名
-request_body = '{"departments": [...]}'
-signature = ASign.get_hex_signature(credential, request_body)
+request_data = {"departments": [...]}
+# dump的时候，不要使用 ensure_ascii=False
+request_body = json.dumps(request_data)
+
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
+# 如果credential中的变量已经注入到系统变量中，可以通过
+    # os.getenv("APP_ID") 来获取app_id
+    # os.getenv("ENTERPRISE_CODE") 来获取enterprise_code
+    # os.getenv("APP_SECRET") 来app_secret
+# 那么创建签名对象时，不需要再传入credential
+# signature = sig_generator.create_signature(request_body)
 
 # 设置请求头
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 ```
 
@@ -657,7 +667,7 @@ aflow-sys/
 - `detailUrl`: 订单详情页地址
   - `h5Url`: H5端详情页地址
   - `webUrl`: PC端详情页地址
-- `externalSystemCode`: 外部系统编码（如：odoo）
+- `thirdFlowCode`: 外部系统流程编码（必填，全局唯一）
 
 ### 创建三方流程定义接口
 
@@ -940,12 +950,12 @@ public class ASign {
 
 ```sql
 -- 流程定义表扩展字段
-ALTER TABLE qf_flow_base ADD COLUMN engine_type VARCHAR(20) DEFAULT 'AFLOW' COMMENT '流程引擎类型';
-ALTER TABLE qf_flow_base ADD COLUMN external_system_code VARCHAR(50) COMMENT '外部系统编码';
-ALTER TABLE qf_flow_base ADD COLUMN initiate_h5_url VARCHAR(500) COMMENT 'H5发起页地址';
-ALTER TABLE qf_flow_base ADD COLUMN initiate_web_url VARCHAR(500) COMMENT 'PC发起页地址';
-ALTER TABLE qf_flow_base ADD COLUMN detail_h5_url VARCHAR(500) COMMENT 'H5详情页地址';
-ALTER TABLE qf_flow_base ADD COLUMN detail_web_url VARCHAR(500) COMMENT 'PC详情页地址';
+ALTER TABLE flow_base ADD COLUMN engine_type VARCHAR(20) DEFAULT 'AFLOW' COMMENT '流程引擎类型';
+ALTER TABLE flow_base ADD COLUMN third_flow_code VARCHAR(50) COMMENT '外部系统流程编码（必填，全局唯一）';
+ALTER TABLE flow_base ADD COLUMN initiate_h5_url VARCHAR(500) COMMENT 'H5发起页地址';
+ALTER TABLE flow_base ADD COLUMN initiate_web_url VARCHAR(500) COMMENT 'PC发起页地址';
+ALTER TABLE flow_base ADD COLUMN detail_h5_url VARCHAR(500) COMMENT 'H5详情页地址';
+ALTER TABLE flow_base ADD COLUMN detail_web_url VARCHAR(500) COMMENT 'PC详情页地址';
 ```
 
 #### OAuth2配置表
