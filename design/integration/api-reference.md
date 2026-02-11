@@ -24,13 +24,18 @@
 
 # 第一部分：aiflow提供的接口
 
+## 0. 代码示例
+
+https://github.com/AFlowTech/aflow-python-client/blob/main/demo/aflow_method_demo/demo.py
+
+
 ## 1. 通用说明
 
 ### 1.1 用户编码绑定说明
 
 **重要提示：** 在调用aiflow接口时，如果接口参数中包含用户编码（如 `managerUserCode`、`operationUserCode`、`configUserCode`、`createBy`、`initiator`、`assigneeUserCode` 等），这些用户编码必须是**贵公司系统的用户唯一ID**（即 `customUserCode`）。
 
-在使用这些用户编码之前，**必须先调用用户绑定接口**（`/aflow/api/auth/bind`）将贵公司的用户编码与aiflow系统的用户编码进行绑定。
+在使用这些用户编码之前，**必须先调用用户绑定接口**（`/aflow/api/auth/bind`）将贵公司的用户编码与aiflow系统的用户编码进行绑定、绑定的时机是般建议为贵公司的用户中心产生用户时、调用我们绑定一次即可。
 
 **绑定流程：**
 1. 调用 `/aflow/api/auth/bind` 接口，传入贵公司的用户编码（`customUserCode`）和关联信息（`linkUserCode` 或 `phoneNumber`）
@@ -45,62 +50,64 @@
 
 ### 1.2 签名机制
 
-所有aiflow提供的接口都需要使用签名验证（`A-Signature` Header）。
+所有aiflow提供的接口都需要使用签名验证（`A-Signature` Header），Odoo提供的接口也需要使用相同的签名机制。
 
-**推荐方式：** 使用 aflow 提供的 **Python SDK**（`aflow-client-python`）
+> **推荐方式**：Odoo 可直接使用 aflow 提供的 **Python SDK**（`aflow-client-python`），无需自行实现签名算法。
 
-**Python SDK调用示例：**
+#### 使用 Python SDK（推荐）
 
 ```python
-from auth import ASign, Credential
-import requests
+from aflow_client_python import ASignature
 import json
 
-# 1. 创建认证凭证
-credential = Credential(
+# 创建认证凭证
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
 )
 
-# 2. 准备请求体
-request_data = {
-    "departments": [
-        {
-            "deptId": "DEPT001",
-            "deptName": "技术部",
-            "parentId": "",
-            "orderNum": 100,
-            "status": 1
-        }
-    ]
-}
-request_body = json.dumps(request_data, ensure_ascii=False)
+# 生成签名
+request_data = {"departments": [...]}
+# dump的时候，不要使用 ensure_ascii=False
+request_body = json.dumps(request_data)
 
-# 3. 生成签名
-signature = ASign.get_hex_signature(credential, request_body)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
+# 如果credential中的变量已经注入到系统变量中，可以通过
+#   os.getenv("APP_ID") 来获取app_id
+#   os.getenv("ENTERPRISE_CODE") 来获取enterprise_code
+#   os.getenv("APP_SECRET") 来获取app_secret
+# 那么创建签名对象时，不需要再传入credential
+# signature = sig_generator.create_signature(request_body)
 
-# 4. 设置请求头
+# 设置请求头
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
-
-# 5. 发送请求
-response = requests.post(
-    "https://aiflow.example.com/aflow/api/sys/sync/department",
-    headers=headers,
-    data=request_body.encode('utf-8')
-)
-
-print(response.json())
 ```
 
-**SDK安装：**
+**SDK 安装：**
 ```bash
+# 从 aflow 获取 SDK 源码
 cd aflow-client-python
 pip install -e .
 ```
+
+#### 签名算法说明（自行实现参考）
+
+**签名算法：** MD5（注意：实际使用的是 MD5，不是 HMAC-SHA256）
+
+**签名生成步骤：**
+
+1. 构造字符串：`enterpriseCode + appSecret + requestBody + timestamp`
+2. 第一次 MD5：`MD5(enterpriseCode + appSecret + requestBody + timestamp)`
+3. 第二次 MD5：`MD5(第一次MD5的结果)`
+4. 构造 ASignature 对象：`{enterpriseCode, appId, timestamp, cipher}`
+5. 序列化为 JSON，再转换为十六进制字符串
+
+> **详细签名算法实现请参考：** [技术原理文档 - 签名算法](technical-details.md#签名算法)（包含签名生成和验证的详细实现）
 
 ### 1.3 通用请求头
 
@@ -135,10 +142,10 @@ A-Signature: {签名十六进制字符串}
 ```
 
 **状态码说明：**
-- `0`: 成功
-- `-4002`: 参数错误
-- `-4001`: 操作不支持
-- `-1024`: 通用错误
+- `0`: 成功（`StatusCodeEnum.SUCCESS`）
+- `-4002`: 参数错误（`StatusCodeEnum.PARAM_ERROR`）
+- `-4001`: 操作不支持（`StatusCodeEnum.NOT_SUPPORT`）
+- `-1024`: 通用错误（`StatusCodeEnum.ERROR`）
 
 ---
 
@@ -179,11 +186,11 @@ A-Signature: {签名十六进制字符串}
 **Python调用示例：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -201,18 +208,19 @@ request_data = {
 #     "phoneNumber": "13800138000"  # 用户手机号
 # }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/auth/bind",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
@@ -229,11 +237,11 @@ else:
 在创建三方流程定义之前，需要先绑定相关用户：
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -250,18 +258,19 @@ def bind_user(custom_user_code, phone_number=None, link_user_code=None):
     elif phone_number:
         request_data["phoneNumber"] = phone_number
     
-    request_body = json.dumps(request_data, ensure_ascii=False)
-    signature = ASign.get_hex_signature(credential, request_body)
+    request_body = json.dumps(request_data)
+    sig_generator = ASignature()
+    signature = sig_generator.create_signature(request_body, credential)
     
     headers = {
         "Content-Type": "application/json",
-        "A-Signature": signature
+        "X-A-Signature": signature
     }
     
     response = requests.post(
         "https://aiflow.example.com/aflow/api/auth/bind",
         headers=headers,
-        data=request_body.encode('utf-8')
+        json=request_data
     )
     
     result = response.json()
@@ -296,18 +305,19 @@ request_data = {
     "createBy": "ODOO_CREATOR_001"  # 使用贵公司的用户编码
 }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/flow/create_third_party",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
@@ -325,7 +335,14 @@ if result['status'] == 0:
 
 ## 3. 基础数据同步接口
 
-### 3.1 部门数据同步接口
+> **重要提示**：基础数据同步有两种方案可选，详见 [主方案文档 - 基础数据同步方案](erp-wms-integration-design.md#21-基础数据同步方案)  
+> **技术原理和时序图：** 参考 [技术原理文档 - 基础数据同步方案](technical-details.md#基础数据同步方案)
+
+### 3.1 方案一：ERP主动推送（需要以下接口）
+
+如果选择方案一，aiflow需要提供以下接口供ERP推送数据。
+
+#### 3.1.1 部门数据同步接口
 
 **接口地址：** `POST /aflow/api/sys/sync/department`
 
@@ -351,14 +368,14 @@ if result['status'] == 0:
 
 **请求参数说明：**
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| departments | Array | 是 | 部门列表（必须按层级顺序传递） |
-| departments[].deptId | String | 是 | 部门ID（外部系统） |
-| departments[].deptName | String | 是 | 部门名称 |
+| 参数 | 类型 | 必填 | 说明                |
+|------|------|------|-------------------|
+| departments | Array | 是 | 部门列表（必须按层级顺序传递）   |
+| departments[].deptId | String | 是 | 部门ID（外部系统）        |
+| departments[].deptName | String | 是 | 部门名称              |
 | departments[].parentId | String | 否 | 父部门ID（外部系统，根部门为空） |
-| departments[].deptCode | String | 否 | 部门编码（可选） |
-| departments[].orderNum | Integer | 否 | 排序号（默认100） |
+| departments[].deptCode | String | 否 | aiflow部门编码（可选）    |
+| departments[].orderNum | Integer | 否 | 排序号（默认100）        |
 | departments[].status | Integer | 否 | 状态：1-启用，0-禁用（默认1） |
 
 **响应体：**
@@ -377,12 +394,11 @@ if result['status'] == 0:
 **Python调用示例：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
-# 配置信息
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -408,25 +424,26 @@ request_data = {
     ]
 }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/sys/sync/department",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
 print(f"成功: {result['data']['successCount']}, 失败: {result['data']['failCount']}")
 ```
 
-### 3.2 用户数据同步接口
+#### 3.1.2 用户数据同步接口
 
 **接口地址：** `POST /aflow/api/sys/sync/user`
 
@@ -491,11 +508,11 @@ print(f"成功: {result['data']['successCount']}, 失败: {result['data']['failC
 **Python调用示例：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -529,27 +546,40 @@ request_data = {
     ]
 }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/sys/sync/user",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
 print(f"成功: {result['data']['successCount']}, 失败: {result['data']['failCount']}")
 ```
 
+### 3.2 方案二：aiflow主动同步钉钉（推荐）
+
+如果选择方案二（推荐），aiflow将使用现有的钉钉同步机制，**无需开发推送接口**。ERP也无需开发推送逻辑。
+
+**方案二要求：**
+- Odoo的OAuth2 userinfo接口必须返回手机号/邮箱和部门ID（详见 [OAuth2 UserInfo接口](#413-用户信息端点user-info-endpoint)）
+- aiflow将在SSO登录时自动绑定ERP用户编码和部门编码
+
+> **技术原理：** 参考 [技术原理文档 - 方案二：aiflow主动同步钉钉方案](technical-details.md#方案二aiflow主动同步钉钉方案推荐)
+
 ---
 
 ## 4. SSO单点登录接口
+
+> **技术原理和时序图：** 参考 [技术原理文档 - SSO单点登录对接方案](technical-details.md#sso单点登录对接方案oauth-20)
 
 ### 4.1 OAuth2回调接口
 
@@ -631,6 +661,8 @@ if result['status'] == 0:
 
 ## 5. 任务中心简易集成接口
 
+> **技术原理和时序图：** 参考 [技术原理文档 - 任务中心统一简易集成方案](technical-details.md#任务中心统一简易集成方案)
+
 ### 5.1 创建三方流程定义接口
 
 > **重要提示：** 接口中的用户编码字段（`managerUserCode`、`operationUserCode`、`configUserCode`、`createBy`）必须使用**贵公司的用户编码**（`customUserCode`）。在使用这些用户编码之前，请先调用 `/aflow/api/auth/bind` 接口进行绑定。详见 [用户编码绑定接口](#21-用户编码绑定接口)。
@@ -642,8 +674,8 @@ if result['status'] == 0:
 **请求体：**
 ```json
 {
-  "flowCode": "三方业务流程编码",
   "title": "流程标题",
+  "thirdFlowCode":"flowTest001",
   "initiateUrl": {
     "h5Url": "H5发起页地址",
     "webUrl": "PC发起页地址"
@@ -652,11 +684,11 @@ if result['status'] == 0:
     "h5Url": "H5详情页地址",
     "webUrl": "PC详情页地址"
   },
-  "groupId": "所属分组ID",
-  "managerUserCode": "流程负责人用户编码",
-  "operationUserCode": "运营负责人用户编码",
-  "configUserCode": "配置负责人用户编码",
-  "createBy": "创建人用户编码",
+  "categoryId": "所属分组ID",
+  "managerUserCode": "流程负责人用户编码（贵公司用户编码）",
+  "operationUserCode": "运营负责人用户编码（贵公司用户编码）",
+  "configUserCode": "配置负责人用户编码（贵公司用户编码）",
+  "createBy": "创建人用户编码（贵公司用户编码）",
   "allowedApplyTerminals": ["pc", "mobile"],
   "allowedApplyRule": {
     "allowedApplyType": "all",
@@ -677,22 +709,30 @@ if result['status'] == 0:
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| flowCode | String | 是 | 三方业务流程编码 |
 | title | String | 是 | 流程标题 |
+| thirdFlowCode | Object | 是 | 外部系统流程编码（必填，全局唯一） |
 | initiateUrl | Object | 是 | 流程发起页地址 |
 | initiateUrl.h5Url | String | 是 | H5发起页地址 |
 | initiateUrl.webUrl | String | 是 | PC发起页地址 |
 | detailUrl | Object | 是 | 订单详情页地址 |
 | detailUrl.h5Url | String | 是 | H5详情页地址 |
 | detailUrl.webUrl | String | 是 | PC详情页地址 |
-| groupId | String | 是 | 所属分组ID |
-| managerUserCode | String | 是 | 流程负责人用户编码 |
-| operationUserCode | String | 是 | 运营负责人用户编码 |
-| configUserCode | String | 是 | 配置负责人用户编码 |
-| createBy | String | 是 | 创建人用户编码 |
-| allowedApplyTerminals | Array | 否 | 允许发起终端：["pc", "mobile"]（默认全部） |
-| allowedApplyRule | Object | 否 | 允许发起规则（默认全部） |
-| allowedManageRule | Object | 否 | 允许查看订单/管理流程规则（默认全部） |
+| categoryId | String | 是 | 所属分组ID |
+| managerUserCode | String | 是 | 流程负责人用户编码（贵公司用户编码，需先绑定） |
+| operationUserCode | String | 是 | 运营负责人用户编码（贵公司用户编码，需先绑定） |
+| configUserCode | String | 是 | 配置负责人用户编码（贵公司用户编码，需先绑定） |
+| createBy | String | 是 | 创建人用户编码（贵公司用户编码，需先绑定） |
+| allowedApplyTerminals | Array | 否 | 允许发起终端：["pc", "mobile"]（默认全部），对应 `FlowDetail.allowedApplyTerminals` |
+| allowedApplyRule | Object | 否 | 允许发起规则（默认全部），对应 `FlowDetail.allowedApplyRule` |
+| allowedApplyRule.allowedApplyType | String | 否 | 允许发起类型：all-全部，specify-指定（默认all） |
+| allowedApplyRule.userCodes | Array | 否 | 允许发起的用户编码列表（贵公司用户编码） |
+| allowedApplyRule.deptCodes | Array | 否 | 允许发起的部门编码列表 |
+| allowedApplyRule.userGroupCodes | Array | 否 | 允许发起的用户组编码列表 |
+| allowedManageRule | Object | 否 | 允许查看订单/管理流程规则（默认全部），对应 `FlowDetail.allowedManageRule` |
+| allowedManageRule.allowedApplyType | String | 否 | 允许管理类型：all-全部，specify-指定（默认all） |
+| allowedManageRule.userCodes | Array | 否 | 允许管理的用户编码列表（贵公司用户编码） |
+| allowedManageRule.deptCodes | Array | 否 | 允许管理的部门编码列表 |
+| allowedManageRule.userGroupCodes | Array | 否 | 允许管理的用户组编码列表 |
 
 **响应体：**
 ```json
@@ -709,11 +749,11 @@ if result['status'] == 0:
 **Python调用示例：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -723,6 +763,7 @@ credential = Credential(
 # 在使用前需要先调用 /aflow/api/auth/bind 接口进行绑定
 request_data = {
     "title": "销售订单审批流程",
+    "thirdFlowCode":"flowTest001",    
     "initiateUrl": {
         "h5Url": "https://odoo.example.com/h5/sales/apply",
         "webUrl": "https://odoo.example.com/web/sales/apply"
@@ -745,18 +786,19 @@ request_data = {
     }
 }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/flow/create_third_party",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
@@ -779,25 +821,31 @@ if result['status'] == 0:
 }
 ```
 
+**请求参数说明：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| flowCode | String | 是 | 流程编码 |
+| flowVersion | Integer | 是 | 流程版本 |
+| updateDesc | String | 否 | 更新说明 |
+
 **响应体：**
 ```json
 {
   "status": 0,
   "msg": "success",
-  "data": {
-    "success": true
-  }
+  "data": true
 }
 ```
 
 **Python调用示例：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -809,18 +857,19 @@ request_data = {
     "updateDesc": "初始版本上线"
 }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/flow/online_third_party",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
@@ -865,6 +914,7 @@ if result['status'] == 0:
       "taskResult": "accept",
       "deadLine": "2025-01-25 18:00:00",
       "nodeType": "audit",
+      "createTime": "2025-01-24 10:00:00",
       "handleTime": "2025-01-24 15:30:00",
       "showPc": true,
       "showMobile": true
@@ -899,6 +949,7 @@ if result['status'] == 0:
 | tasks[].taskResult | String | 是 | 任务处理结果：new-新建，accept-领取，pass-通过，reject-拒绝，revoke-撤销，rebut-驳回 |
 | tasks[].deadLine | String | 是 | 处理截止时间（格式：yyyy-MM-dd HH:mm:ss） |
 | tasks[].nodeType | String | 是 | 节点类型：handle-执行，audit-审批，notify-知悉（默认audit） |
+| tasks[].createTime | String | 否 | 创建时间（格式：yyyy-MM-dd HH:mm:ss） |
 | tasks[].handleTime | String | 否 | 处理时间（格式：yyyy-MM-dd HH:mm:ss，处理完成后必填） |
 | tasks[].showPc | Boolean | 是 | PC是否展示 |
 | tasks[].showMobile | Boolean | 是 | 手机是否展示 |
@@ -916,21 +967,24 @@ if result['status'] == 0:
 {
   "status": 0,
   "msg": "success",
-  "data": {
-    "success": true
-  }
+  "data": true
 }
 ```
+
+**新任务通知功能：**
+- 当同步的任务是新增任务（`taskStatus` 为 `new` 或 `ing` 状态）时，aiflow会自动发送钉钉push消息通知处理人
+- 通知消息会发送给任务的所有处理人（`assigneeUserCode` 列表中的所有用户）
+- 使用 `com.aflow.sys.link.LinkMsgService#sendFlowMsg` 方法发送通知
 
 **Python调用示例：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 from datetime import datetime
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -950,6 +1004,7 @@ request_data = {
     "businessKey": "SALES_ORDER_20250124001",
     "createTime": now,
     "updateTime": now,
+    "thirdFlowCode": "SALES_ORDER",
     "ccUsers": [
         {
             "userCode": "ODOO_USER_003",  # 贵公司Odoo系统的用户ID
@@ -971,18 +1026,19 @@ request_data = {
     ]
 }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/order/sync/task",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
@@ -994,6 +1050,8 @@ if result['status'] == 0:
 ---
 
 ## 6. 全面流程引擎集成接口
+
+> **技术原理和时序图：** 参考 [技术原理文档 - 全面使用流程中心的表单与流程引擎方案](technical-details.md#全面使用流程中心的表单与流程引擎方案)
 
 ### 6.1 流程定义管理接口
 
@@ -1060,9 +1118,7 @@ if result['status'] == 0:
 {
   "status": 0,
   "msg": "success",
-  "data": {
-    "success": true
-  }
+  "data": true
 }
 ```
 
@@ -1087,7 +1143,7 @@ if result['status'] == 0:
       }
     ]
   },
-  "syncType": "CREATE"
+  "syncType": "CREATE|UPDATE|DELETE"
 }
 ```
 
@@ -1105,20 +1161,18 @@ if result['status'] == 0:
 {
   "status": 0,
   "msg": "success",
-  "data": {
-    "success": true
-  }
+  "data": true
 }
 ```
 
 **Python调用示例：**
 
 ```python
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -1146,18 +1200,19 @@ request_data = {
     "syncType": "CREATE"
 }
 
-request_body = json.dumps(request_data, ensure_ascii=False)
-signature = ASign.get_hex_signature(credential, request_body)
+request_body = json.dumps(request_data)
+sig_generator = ASignature()
+signature = sig_generator.create_signature(request_body, credential)
 
 headers = {
     "Content-Type": "application/json",
-    "A-Signature": signature
+    "X-A-Signature": signature
 }
 
 response = requests.post(
     "https://aiflow.example.com/aflow/api/form/sync",
     headers=headers,
-    data=request_body.encode('utf-8')
+    json=request_data
 )
 
 result = response.json()
@@ -1181,7 +1236,7 @@ if result['status'] == 0:
       "taskId": "任务ID",
       "taskName": "任务名称",
       "handlerUserCode": "处理人编码",
-      "handleResult": "APPROVED",
+      "handleResult": "APPROVED|REJECTED",
       "handleComment": "审批意见",
       "handleTime": "2025-01-24 15:30:00"
     }
@@ -1194,9 +1249,7 @@ if result['status'] == 0:
 {
   "status": 0,
   "msg": "success",
-  "data": {
-    "success": true
-  }
+  "data": true
 }
 ```
 
@@ -1366,7 +1419,7 @@ def token():
 
 **接口说明：** 获取用户信息
 
-> **重要提示**：如果选择**方案二：aiflow主动同步钉钉**，此接口必须返回`phoneNumber`（手机号）和`deptId`（部门ID），用于用户绑定。
+> **重要提示**：如果选择**方案二：aiflow主动同步钉钉**，此接口必须返回`phone`（手机号）和`deptId`（部门ID），用于用户绑定。
 
 **请求头：**
 ```
@@ -1379,12 +1432,29 @@ Authorization: Bearer {accessToken}
   "userId": "用户ID（ERP用户编码）",
   "username": "用户名",
   "name": "姓名",
-  "phoneNumber": "手机号（必填，至少phoneNumber或email选一个）",
+  "phone": "手机号（必填，至少phone或email选一个）",
   "email": "邮箱（可选）",
   "deptId": "部门ID（必填，用于建立部门映射）",
   "deptName": "部门名称"
 }
 ```
+
+**请求参数说明：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| userId | String | 是 | 用户ID（ERP用户编码） |
+| username | String | 否 | 用户名 |
+| name | String | 否 | 姓名 |
+| phone | String | 是 | 手机号（必填，至少phone或email选一个） |
+| email | String | 否 | 邮箱（可选） |
+| deptId | String | 是 | 部门ID（必填，用于建立部门映射） |
+| deptName | String | 否 | 部门名称 |
+
+**方案二特殊要求：**
+- `phone`和`email`至少返回一个（用于匹配钉钉用户）
+- `deptId`必须返回（用于建立部门映射关系）
+- `userId`必须返回（用于建立用户映射关系）
 
 **Python实现示例（Flask）：**
 
@@ -1421,7 +1491,7 @@ def userinfo():
         'userId': 'USER001',
         'username': 'zhangsan',
         'name': '张三',
-        'phoneNumber': '13800138000',
+        'phone': '13800138000',
         'email': 'zhangsan@example.com',
         'deptId': 'DEPT001',
         'deptName': '技术部'
@@ -1451,7 +1521,7 @@ A-Signature: {签名十六进制字符串}
   "businessKey": "业务单据号",
   "taskId": "任务ID",
   "taskName": "任务名称",
-  "action": "START",
+  "action": "START|COMPLETE|REJECT|CANCEL",
   "formData": {
     "customerName": "客户名称",
     "amount": 10000
@@ -1493,13 +1563,13 @@ A-Signature: {签名十六进制字符串}
 
 ```python
 from flask import Flask, request, jsonify
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import json
 
 app = Flask(__name__)
 
 # 配置信息（应与aiflow配置一致）
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -1508,15 +1578,17 @@ credential = Credential(
 @app.route('/odoo/api/workflow/receive', methods=['POST'])
 def receive_workflow():
     # 验证签名
-    signature_header = request.headers.get('A-Signature')
+    signature_header = request.headers.get('X-A-Signature')
     request_body = request.get_data(as_text=True)
     
     # 验证签名（实际应用中应实现签名验证逻辑）
-    # if not verify_signature(signature_header, request_body, credential):
-    #     return jsonify({
-    #         'status': -4002,
-    #         'msg': '签名验证失败'
-    #     }), 403
+    sig_generator = ASignature()
+    expected_signature = sig_generator.create_signature(request_body, credential)
+    if signature_header != expected_signature:
+        return jsonify({
+            'status': -4002,
+            'msg': '签名验证失败'
+        }), 403
     
     data = request.get_json()
     
@@ -1547,16 +1619,6 @@ def receive_workflow():
             'success': True
         }
     })
-
-def verify_signature(signature_header, request_body, credential):
-    """验证签名"""
-    try:
-        # 计算签名
-        expected_signature = ASign.get_hex_signature(credential, request_body)
-        return signature_header == expected_signature
-    except Exception as e:
-        print(f"签名验证异常: {e}")
-        return False
 ```
 
 ### 2.2 接收审批日志接口（可选）
@@ -1581,7 +1643,7 @@ A-Signature: {签名十六进制字符串}
       "taskId": "任务ID",
       "taskName": "任务名称",
       "handlerUserCode": "处理人编码",
-      "handleResult": "APPROVED",
+      "handleResult": "APPROVED|REJECTED",
       "handleComment": "审批意见",
       "handleTime": "2025-01-24 15:30:00",
       "formData": {
@@ -1607,11 +1669,11 @@ A-Signature: {签名十六进制字符串}
 
 ```python
 from flask import Flask, request, jsonify
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 
 app = Flask(__name__)
 
-credential = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -1624,11 +1686,13 @@ def receive_approval_log():
     request_body = request.get_data(as_text=True)
     
     # 验证签名
-    # if not verify_signature(signature_header, request_body, credential):
-    #     return jsonify({
-    #         'status': -4002,
-    #         'msg': '签名验证失败'
-    #     }), 403
+    sig_generator = ASignature()
+    expected_signature = sig_generator.create_signature(request_body, credential)
+    if signature_header != expected_signature:
+        return jsonify({
+            'status': -4002,
+            'msg': '签名验证失败'
+        }), 403
     
     data = request.get_json()
     order_id = data.get('orderId')
@@ -1685,13 +1749,13 @@ def receive_approval_log():
 aiflow接口调用示例：同步部门数据
 """
 
-from auth import ASign, Credential
+from aflow_client_python import ASignature
 import requests
 import json
 
 # 配置信息
 AIFLOW_BASE_URL = "https://aiflow.example.com"
-CREDENTIAL = Credential(
+credential = dict(
     enterprise_code="COMPANY001",
     app_id="APP001",
     app_secret="your_app_secret"
@@ -1721,19 +1785,20 @@ def sync_department():
         ]
     }
     
-    request_body = json.dumps(request_data, ensure_ascii=False)
-    signature = ASign.get_hex_signature(CREDENTIAL, request_body)
+    request_body = json.dumps(request_data)
+    sig_generator = ASignature()
+    signature = sig_generator.create_signature(request_body, credential)
     
     headers = {
         "Content-Type": "application/json",
-        "A-Signature": signature
+        "X-A-Signature": signature
     }
     
     try:
         response = requests.post(
             url,
             headers=headers,
-            data=request_body.encode('utf-8'),
+            json=request_data,
             timeout=30
         )
         response.raise_for_status()
@@ -1756,6 +1821,7 @@ if __name__ == "__main__":
 
 ---
 
-**文档版本：** v1.0  
+**文档版本：** v2.0  
 **最后更新：** 2025-01-24  
 **维护者：** aiflow团队
+
